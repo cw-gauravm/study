@@ -24,7 +24,7 @@ no 2xx / timeout ─► retry w/ backoff + jitter (hours–days) ─► DLQ, dis
 - **Ack fast, process async:** durably persist or enqueue the raw event (DB table, SQS, RabbitMQ with publisher confirms), then return 2xx — GitHub fails a delivery after 10 s, Slack wants a response within 3 s. Slow inline work → timeouts → retries → duplicates.
 - **Dedupe by event id:** delivery is at-least-once; record processed ids under a unique constraint in the same transaction as the side effect (Postgres `INSERT … ON CONFLICT DO NOTHING`; SQL Server: unique index + catch the duplicate-key error) so handlers are idempotent.
 - **Don't rely on ordering:** retries interleave (`updated` can beat `created`); compare the object's version/`updated_at` and drop older snapshots, or re-fetch the resource.
-- **Ignore unknown event types:** return 2xx and skip; a 4xx/5xx triggers retries and can get the endpoint disabled. Providers add types without notice.
+- **Ignore unknown event types:** return 2xx and skip; a 4xx/5xx triggers retries and can get the endpoint disabled. Providers add types over time, and wildcard subscriptions deliver them.
 
 ## Sender checklist
 
@@ -40,9 +40,9 @@ no 2xx / timeout ─► retry w/ backoff + jitter (hours–days) ─► DLQ, dis
 
 ## Advanced
 
-- **Fat vs thin payloads:** *fat* = full object snapshot — no extra call, but may be stale or out of order and ships data on every delivery; *thin* = id + type, the receiver fetches current state — ordering stops mattering, at the cost of an API call per event (watch rate limits). Stripe's v2 "thin events" and Microsoft Graph change notifications are thin.
+- **Fat vs thin payloads:** *fat* = full object snapshot — no extra call, but may be stale or out of order and ships data on every delivery; *thin* = id + type, the receiver fetches current state — ordering stops mattering, at the cost of an API call per event (watch rate limits). Stripe's v2 "thin events" and Microsoft Graph's default change notifications are thin.
 - **Reconciliation job:** webhooks get lost — endpoint down past the retry window, endpoint auto-disabled, handler bug; GitHub doesn't auto-retry failed deliveries at all. Periodically list recent objects/events via the API and repair drift. For payments, never mark an order paid from the browser redirect alone.
-- **Sender at scale:** outbox → event bus (Kafka) → dispatcher workers with per-endpoint queues and rate limits → a delivery-attempt log customers can inspect. Bought, not built: Svix, Hookdeck, Convoy.
+- **Sender at scale:** outbox → event bus (Kafka) → dispatcher workers with per-endpoint queues and rate limits → a delivery-attempt log customers can inspect.
 - **Stronger auth:** HMAC proves the sender knows a shared secret; asymmetric signatures (Ed25519 in Standard Webhooks) remove the shared secret; mTLS or OAuth client credentials on the callback for high-assurance consumers. A "secret URL" alone is not auth — URLs leak into logs.
 - **Local testing:** tunnels (ngrok, Cloudflare Tunnel, Visual Studio dev tunnels) expose localhost; provider CLIs forward and trigger events (`stripe listen --forward-to localhost:5000/webhooks`, `stripe trigger payment_intent.succeeded`); replay real deliveries from the provider dashboard.
 - **Standards:** **Standard Webhooks** — `webhook-id`, `webhook-timestamp`, `webhook-signature` headers, HMAC-SHA256 over `id.timestamp.body`, reference libraries in many languages; **CloudEvents** (CNCF) — a common envelope (`id`, `source`, `type`, `specversion`) with an HTTP binding, used by Azure Event Grid and Knative.
@@ -57,15 +57,15 @@ no 2xx / timeout ─► retry w/ backoff + jitter (hours–days) ─► DLQ, dis
 
 ## In the wild
 
-Stripe, Razorpay, PayPal, Adyen (payments) · GitHub, GitLab (push → CI) · Slack Events API, Twilio callbacks, Shopify, Zoom · Webhooks-as-a-service: Svix, Hookdeck, Convoy · Azure Event Grid webhook subscriptions, AWS EventBridge API destinations, SNS HTTP/S subscriptions · .NET: Stripe.net `EventUtility.ConstructEvent`, `HMACSHA256` + `CryptographicOperations.FixedTimeEquals` · Node: `express.raw()` + `stripe.webhooks.constructEvent`.
+Stripe, Razorpay, PayPal, Adyen (payments) · GitHub, GitLab (push → CI) · Slack Events API, Twilio callbacks, Shopify, Zoom · Webhooks-as-a-service: Svix, Hookdeck, Convoy · Azure Event Grid webhook subscriptions, AWS EventBridge API destinations, SNS HTTP/S subscriptions · .NET: Stripe.net `EventUtility.ConstructEvent` · Node: `stripe.webhooks.constructEvent`.
 
 ## Gotchas
 
-- **Body parsers break signatures:** a global `express.json()` or model binding consumes the body before you hash it → "signature mismatch" that only shows up in prod. Keep the raw bytes for webhook routes.
-- **Ack ≠ processed:** returning 200 before the event is durably stored means a crash loses it for good — the provider won't retry.
+- **Body parsers break signatures:** re-serialised JSON has different bytes, so a global `express.json()` or ASP.NET Core model binding → "signature mismatch" that only shows up in prod. Mount `express.raw()` on the webhook route; in ASP.NET Core read the raw `Request.Body` yourself.
+- **Ack ≠ processed:** a 2xx for an event not yet durably stored (fire-and-forget `Task.Run`, an un-awaited promise) is lost on a crash or redeploy — the provider won't retry.
+- **Duplicates arrive concurrently:** if your handler outlives the sender's timeout, the retry runs while the first attempt is still in flight — `SELECT`-then-`INSERT` dedupe races; let the unique constraint decide.
 - **Retry floods after your outage:** hours of backlogged retries arrive at once; size the queue and workers, never process inline.
 - **Twilio signs the full URL + POST params (HMAC-SHA1):** behind a TLS-terminating proxy your app sees `http://` or an internal host, recomputes a different signature and rejects every request — rebuild the public URL first.
-- **Exactly-once is an interview trap:** webhooks are at-least-once, unordered, best-effort — answer with idempotent consumers + reconciliation.
 
 ## Related
 

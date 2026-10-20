@@ -1,6 +1,6 @@
 # Database Sharding
 
-> **TL;DR** — Sharding splits one logical database's rows across many independent database servers (shards) by a **shard key**, so storage and write throughput scale past what a single primary can handle. It's the most powerful and most expensive way to scale a database, so it comes last.
+> **TL;DR** — Sharding splits one logical database's rows across many independent database servers (shards) by a **shard key**, so storage and write throughput scale past what a single primary can handle. It's also the costliest way to scale a database, so it comes last.
 
 ## How it works
 

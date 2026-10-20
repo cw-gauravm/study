@@ -18,7 +18,7 @@ Client ──Authorization: Bearer <jwt>──► API: verify signature + claims
 
 - **Encoded, not encrypted:** base64url is reversible — anyone holding the token can read the payload (paste it into jwt.io). The signature proves integrity and origin, not secrecy.
 - **Registered claims (RFC 7519):** `iss` issuer · `sub` subject · `aud` audience (intended recipients — anyone else must reject it) · `exp` expiry · `nbf` not-before · `iat` issued-at · `jti` unique token id. All optional in the spec — your validation policy makes them mandatory. Roles, tenant and `scope` are custom claims.
-- **Flow:** login → auth server signs a token → client sends `Authorization: Bearer <jwt>` on every call → each service checks signature + claims with a cached key. No session lookup, no per-request call to the auth server.
+- **Flow:** the client sends `Authorization: Bearer <jwt>` on every call; each service checks signature + claims with a cached key — no session lookup, no per-request call to the auth server.
 
 ## Signing algorithms
 
@@ -59,7 +59,6 @@ Auth0, Okta, Microsoft Entra ID, AWS Cognito, Keycloak, Firebase Auth issue JWT 
 
 ## Gotchas
 
-- **"JWTs are encrypted"** — no; base64url is an encoding. Use JWE or keep sensitive data out.
 - **ASP.NET Core's default `ClockSkew` is 5 minutes** — a 5-minute token effectively lives ~10. Lower it explicitly.
 - **No `aud` check** → a token minted for service A is accepted by service B from the same issuer.
 - **Weak HS256 secrets** can be brute-forced offline from one captured token (hashcat); use ≥ 256 random bits or asymmetric keys.
